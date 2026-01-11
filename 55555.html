@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <title>丟盤數據分析 - 手臂伸直偵測</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #f0f2f5;
+        }
+
+        .container {
+            position: relative;
+            margin-top: 20px;
+        }
+
+        #video_input {
+            display: none;
+        }
+
+        /* 隱藏原始影片，只顯示畫布 */
+        canvas {
+            border: 2px solid #333;
+            border-radius: 8px;
+            max-width: 100%;
+        }
+
+        .controls {
+            margin: 20px;
+            gap: 10px;
+            display: flex;
+        }
+
+        button,
+        input {
+            padding: 10px 20px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>飛盤投擲姿勢分析</h1>
+
+    <div class="controls">
+        <button onclick="startCamera()">啟動相機</button>
+        <input type="file" accept="video/*" onchange="loadVideo(event)">
+    </div>
+
+    <div class="container">
+        <video id="video_input" playsinline></video>
+        <canvas id="output_canvas" width="1280" height="720"></canvas>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('video_input');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        // 計算三點間夾角的函數
+        function calculateAngle(a, b, c) {
+            let radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+            let angle = Math.abs(radians * 180.0 / Math.PI);
+            if (angle > 180.0) angle = 360 - angle;
+            return angle;
+        }
+
+        // 當得到偵測結果時執行的邏輯
+        function onResults(results) {
+            // 設定畫布大小與影片一致
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.poseLandmarks) {
+                // 繪製骨架節點
+                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 4 });
+                drawLandmarks(canvasCtx, results.poseLandmarks, { color: '#FF0000', lineWidth: 2 });
+
+                // 取得右臂座標 (12:肩, 14:肘, 16:腕)
+                const shoulder = results.poseLandmarks[12];
+                const elbow = results.poseLandmarks[14];
+                const wrist = results.poseLandmarks[16];
+
+                if (shoulder && elbow && wrist) {
+                    const angle = calculateAngle(shoulder, elbow, wrist);
+
+                    // 將座標換算回畫布像素位置
+                    const ex = elbow.x * canvasElement.width;
+                    const ey = elbow.y * canvasElement.height;
+
+                    // 顯示角度文字
+                    canvasCtx.fillStyle = "white";
+                    canvasCtx.font = "24px Arial";
+                    canvasCtx.fillText(Math.round(angle) + "°", ex, ey - 20);
+
+                    // 判定邏輯：角度小於 160 度時顯示紅色警告
+                    if (angle < 160) {
+                        canvasCtx.fillStyle = "red";
+                        canvasCtx.font = "bold 48px 'Microsoft JhengHei', sans-serif";
+                        canvasCtx.fillText("注意：手臂未伸直！", 50, 100);
+
+                        // 把手肘圓點變大變紅提醒
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(ex, ey, 15, 0, 2 * Math.PI);
+                        canvasCtx.fillStyle = "red";
+                        canvasCtx.fill();
+                    }
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        // 初始化 MediaPipe Pose
+        const pose = new Pose({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+            }
+        });
+
+        pose.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        pose.onResults(onResults);
+
+        // 1. 啟動相機邏輯
+        function startCamera() {
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await pose.send({ image: videoElement });
+                },
+                width: 1280,
+                height: 720
+            });
+            camera.start();
+        }
+
+        // 2. 上傳影片邏輯
+        async function loadVideo(event) {
+            const file = event.target.files[0];
+            videoElement.src = URL.createObjectURL(file);
+            videoElement.play();
+
+            async function step() {
+                if (!videoElement.paused && !videoElement.ended) {
+                    await pose.send({ image: videoElement });
+                    requestAnimationFrame(step);
+                }
+            }
+            videoElement.onplay = () => step();
+        }
+    </script>
+</body>
+
+</html>

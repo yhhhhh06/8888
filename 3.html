@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>飛盤角度同步模擬器</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #video { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
+        #ui {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            width: 85%; background: rgba(0,0,0,0.7); color: white;
+            padding: 20px; border-radius: 20px; text-align: center;
+        }
+        #angleInfo { font-size: 18px; margin-bottom: 10px; color: #00ff00; font-weight: bold; }
+        button {
+            width: 100%; padding: 15px; font-size: 20px; border-radius: 10px;
+            border: none; background: #2196F3; color: white; cursor: pointer;
+        }
+        #permissionBtn {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 10; padding: 20px; background: #ff9800; border: none; color: white; border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <button id="permissionBtn">啟動相機與感測器</button>
+
+    <video id="video" autoplay playsinline></video>
+    
+    <div id="ui">
+        <div id="angleInfo">傾斜角度: 0° | 仰角: 0°</div>
+        <button id="throwBtn">投擲 (模擬軌跡)</button>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        let scene, camera, renderer, frisbee, clock;
+        let isFlying = false;
+        let currentRoll = 0, currentPitch = 0;
+        let points = []; // 儲存軌跡點
+        let line; // 軌跡線物件
+
+        const btn = document.getElementById('permissionBtn');
+        btn.onclick = () => {
+            initApp();
+            btn.style.display = 'none';
+        };
+
+        async function initApp() {
+            // 1. 初始化相機
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment" }, audio: false 
+            });
+            document.getElementById('video').srcObject = stream;
+
+            // 2. 初始化陀螺儀 (DeviceOrientation)
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission().then(response => {
+                    if (response == 'granted') window.addEventListener('deviceorientation', handleOrientation);
+                });
+            } else {
+                window.addEventListener('deviceorientation', handleOrientation);
+            }
+
+            setupThreeJS();
+        }
+
+        function handleOrientation(event) {
+            // gamma 是左右傾斜 (Roll), beta 是前後仰角 (Pitch)
+            currentRoll = event.gamma; 
+            currentPitch = event.beta;
+            document.getElementById('angleInfo').innerText = 
+                `傾斜(Roll): ${Math.round(currentRoll)}° | 仰角(Pitch): ${Math.round(currentPitch)}°`;
+        }
+
+        function setupThreeJS() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // 飛盤模型
+            const geo = new THREE.CylinderGeometry(0.2, 0.2, 0.03, 32);
+            const mat = new THREE.MeshPhongMaterial({ color: 0xffff00, shininess: 100 });
+            frisbee = new THREE.Mesh(geo, mat);
+            scene.add(frisbee);
+
+            const light = new THREE.PointLight(0xffffff, 10, 100);
+            light.position.set(0, 5, 5);
+            scene.add(light);
+            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+            camera.position.z = 2;
+            animate();
+        }
+
+        // 投擲邏輯與軌跡生成
+        document.getElementById('throwBtn').onclick = () => {
+            if (isFlying) return;
+            
+            isFlying = true;
+            points = [];
+            
+            // 建立透明軌跡線
+            const lineMat = new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.5 });
+            const lineGeo = new THREE.BufferGeometry();
+            line = new THREE.Line(lineGeo, lineMat);
+            scene.add(line);
+
+            let tempPos = new THREE.Vector3(0, 0, 0);
+            // 根據手機角度決定初始速度方向
+            let speed = 15;
+            let pitchRad = currentPitch * (Math.PI / 180);
+            let rollRad = currentRoll * (Math.PI / 180);
+            
+            let vx = Math.sin(rollRad) * speed * 0.5;
+            let vy = Math.sin(pitchRad) * speed;
+            let vz = -Math.cos(pitchRad) * speed;
+
+            let vel = new THREE.Vector3(vx, vy, vz);
+            let dt = 0.05;
+
+            // 預計算 50 個點生成軌跡
+            for (let i = 0; i < 50; i++) {
+                points.push(tempPos.clone());
+                vel.y -= 9.8 * dt; // 重力
+                tempPos.add(vel.clone().multiplyScalar(dt));
+            }
+            
+            lineGeo.setFromPoints(points);
+            
+            // 飛盤動畫歸零並射出
+            frisbee.position.set(0, 0, 0);
+            setTimeout(() => { 
+                isFlying = false; 
+                scene.remove(line); 
+            }, 2000);
+        };
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (!isFlying) {
+                // 當未投擲時，飛盤角度同步手機陀螺儀
+                frisbee.rotation.x = currentPitch * (Math.PI / 180);
+                frisbee.rotation.z = -currentRoll * (Math.PI / 180);
+                frisbee.position.set(0, -0.5, 0); // 停留在畫面下方
+            } else {
+                // 簡單的飛行移動
+                frisbee.position.y += 0.1;
+                frisbee.position.z -= 0.2;
+            }
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>

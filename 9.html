@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Disc Analytics Pro</title>
+    <style>
+        :root { --accent: #00e5ff; --text: #ffffff; }
+        body { margin: 0; background: #000; color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto; overflow: hidden; }
+        
+        /* 相機預覽層 */
+        #video-container { position: relative; width: 100vw; height: 100vh; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+
+        /* 左側專業數據板 (HUD) */
+        .hud-stats {
+            position: absolute; top: 50px; left: 20px; z-index: 10;
+            display: flex; flex-direction: column; gap: 20px;
+        }
+        .stat-box {
+            background: rgba(0, 0, 0, 0.4);
+            border-left: 3px solid var(--accent);
+            padding: 10px 15px;
+            backdrop-filter: blur(8px);
+            border-radius: 0 8px 8px 0;
+        }
+        .stat-label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+        .stat-value { font-size: 28px; font-weight: 800; font-family: 'Courier New', Courier, monospace; }
+        .stat-unit { font-size: 14px; color: var(--accent); margin-left: 4px; }
+
+        /* 底部控制區域 */
+        .control-panel {
+            position: absolute; bottom: 0; width: 100%;
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
+            padding: 30px 20px 50px; box-sizing: border-box;
+            display: flex; flex-direction: column; align-items: center; gap: 15px;
+        }
+        .slider-row { width: 100%; max-width: 400px; display: flex; align-items: center; gap: 15px; }
+        .slider-row label { width: 80px; font-size: 14px; font-weight: bold; }
+        input[type=range] { flex: 1; accent-color: var(--accent); cursor: pointer; }
+
+        /* 錄影按鈕 */
+        .record-btn {
+            width: 60px; height: 60px; border-radius: 50%; background: white;
+            border: none; display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 0 20px rgba(255,255,255,0.3);
+        }
+        .record-btn-inner { width: 24px; height: 24px; background: red; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+<div id="video-container">
+    <video id="webcam" autoplay muted playsinline></video>
+    <canvas id="ar-canvas"></canvas>
+
+    <div class="hud-stats">
+        <div class="stat-box">
+            <div class="stat-label">Target Distance</div>
+            <div class="stat-value" id="val-dist">30</div><span class="stat-unit">M</span>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Release Pitch</div>
+            <div class="stat-value" id="val-pitch">12</div><span class="stat-unit">°</span>
+        </div>
+        <div class="stat-box">
+            <div class="stat-label">Tilt / Roll</div>
+            <div class="stat-value" id="val-roll">0</div><span class="stat-unit">°</span>
+        </div>
+    </div>
+
+    <div class="control-panel">
+        <div class="slider-row">
+            <label>距離 (m)</label>
+            <input type="range" id="input-dist" min="5" max="100" value="30">
+        </div>
+        <div class="slider-row">
+            <label>仰角 (°)</label>
+            <input type="range" id="input-pitch" min="-10" max="45" value="12">
+        </div>
+        <div class="slider-row">
+            <label>頃斜 (°)</label>
+            <input type="range" id="input-roll" min="-45" max="45" value="0">
+        </div>
+        
+        <button class="record-btn">
+            <div class="record-btn-inner"></div>
+        </button>
+    </div>
+</div>
+
+<script>
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('ar-canvas');
+    const ctx = canvas.getContext('2d');
+
+    // 參數獲取
+    const inputs = {
+        dist: document.getElementById('input-dist'),
+        pitch: document.getElementById('input-pitch'),
+        roll: document.getElementById('input-roll')
+    };
+    const displays = {
+        dist: document.getElementById('val-dist'),
+        pitch: document.getElementById('val-pitch'),
+        roll: document.getElementById('val-roll')
+    };
+
+    async function init() {
+        // 開啟鏡頭
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: "environment" }, 
+            audio: false 
+        });
+        video.srcObject = stream;
+        
+        window.addEventListener('resize', resize);
+        resize();
+        render();
+    }
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+
+    function render() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // 更新顯示數值
+        const d = inputs.dist.value;
+        const p = inputs.pitch.value;
+        const r = inputs.roll.value;
+        
+        displays.dist.innerText = d;
+        displays.pitch.innerText = p;
+        displays.roll.innerText = r;
+
+        // 繪製模擬軌跡
+        drawProTrajectory(d, p, r);
+        
+        requestAnimationFrame(render);
+    }
+
+    function drawProTrajectory(distance, pitch, roll) {
+        ctx.beginPath();
+        ctx.strokeStyle = '#00e5ff';
+        ctx.lineWidth = 4;
+        ctx.lineJoin = 'round';
+        ctx.setLineDash([10, 8]);
+        
+        //  glow effect
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#00e5ff';
+
+        // 繪製邏輯
+        let startX = canvas.width / 2;
+        let startY = canvas.height * 0.85; // 從畫面下方一點開始
+        
+        ctx.moveTo(startX, startY);
+
+        // 物理常數模擬 (簡化版)
+        const steps = 50;
+        const scale = distance * 2; // 將距離映射到畫素
+        const radP = pitch * Math.PI / 180;
+        const radR = roll * Math.PI / 180;
+
+        for(let i = 1; i <= steps; i++) {
+            let t = i / steps;
+            
+            // X: 受頃斜影響的偏移
+            let currX = startX + (Math.sin(radR) * t * scale * 2);
+            
+            // Y: 拋物線受仰角影響
+            // 使用二次元方程式模擬：y = x*tan(θ) - (g*x^2)/(2*v^2*cos^2(θ))
+            let horizontalOffset = t * scale;
+            let verticalOffset = (Math.tan(radP) * horizontalOffset) - (0.5 * 9.8 * Math.pow(t, 2) * (scale/5));
+            
+            let currY = startY - verticalOffset;
+
+            ctx.lineTo(currX, currY);
+            if (currY > canvas.height + 100) break;
+        }
+        ctx.stroke();
+
+        // 繪製落點標記
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(startX + (Math.sin(radR) * scale * 2), startY - (Math.tan(radP) * scale) + (0.5 * 9.8 * (scale/5)), 10, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0, 229, 255, 0.3)';
+        ctx.fill();
+        ctx.stroke();
+    }
+
+    init();
+</script>
+</body>
+</html>

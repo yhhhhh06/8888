@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>飛盤距離角度導引</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #ffffff00; font-family: sans-serif; }
+        #video { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
+        #ui {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            width: 90%; background: rgba(0,0,0,0.8); color: white;
+            padding: 15px; border-radius: 20px; text-align: center;
+        }
+        .guide-box { border: 2px solid #00ff00; margin-bottom: 10px; padding: 10px; border-radius: 10px; }
+        .target-text { font-size: 20px; font-weight: bold; color: #FFeb3b; }
+        #angleDisplay { font-size: 16px; margin: 10px 0; }
+        input[type="range"] { width: 100%; margin: 10px 0; }
+        button {
+            width: 100%; padding: 12px; font-size: 18px; border-radius: 10px;
+            border: none; background: #2196F3; color: white;
+        }
+        #permissionBtn {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 100; padding: 20px; background: #4CAF50; color: white; border-radius: 10px; border: none;
+        }
+    </style>
+</head>
+<body>
+
+    <button id="permissionBtn">啟動相機與導引系統</button>
+    <video id="video" autoplay playsinline></video>
+    
+    <div id="ui">
+        <div class="guide-box">
+            目標距離：<span id="distVal" class="target-text">30</span> 公尺
+            <input type="range" id="distSlider" min="10" max="100" value="30">
+        </div>
+        
+        <div id="angleDisplay">
+            <div>建議：仰角 <span id="recPitch">12</span>° | 傾斜 <span id="recRoll">5</span>°</div>
+            <div style="color: #00ff00; margin-top: 5px;">
+                目前：仰角 <span id="curPitch">0</span>° | 傾斜 <span id="curRoll">0</span>°
+            </div>
+        </div>
+        <button id="throwBtn">模擬飛行路徑</button>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        let scene, camera, renderer, frisbee, trajectoryLine;
+        let devicePitch = 0, deviceRoll = 0;
+        let targetDist = 30;
+
+        // 權限啟動
+        document.getElementById('permissionBtn').onclick = async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            document.getElementById('video').srcObject = stream;
+            
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                await DeviceOrientationEvent.requestPermission();
+            }
+            window.addEventListener('deviceorientation', (e) => {
+                devicePitch = e.beta;  // 仰角
+                deviceRoll = e.gamma; // 傾斜
+                updateUI();
+            });
+
+            document.getElementById('permissionBtn').style.display = 'none';
+            initThree();
+        };
+
+        function updateUI() {
+            // 簡單推薦邏輯：距離越遠，需要的仰角通常微增，且需要更多 Hyzer (傾斜) 來抵消高速翻轉
+            const recP = Math.round(5 + (targetDist * 0.2)); 
+            const recR = Math.round(targetDist * 0.15);      
+
+            document.getElementById('recPitch').innerText = recP;
+            document.getElementById('recRoll').innerText = recR;
+            document.getElementById('curPitch').innerText = Math.round(devicePitch);
+            document.getElementById('curRoll').innerText = Math.round(deviceRoll);
+
+            // 當角度接近時改變顏色提示
+            const isMatch = Math.abs(devicePitch - recP) < 3 && Math.abs(deviceRoll - recR) < 3;
+            document.getElementById('angleDisplay').style.color = isMatch ? "#00ff00" : "#ff5722";
+        }
+
+        document.getElementById('distSlider').oninput = (e) => {
+            targetDist = e.target.value;
+            document.getElementById('distVal').innerText = targetDist;
+            updateUI();
+        };
+
+        function initThree() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            const geo = new THREE.CylinderGeometry(0.2, 0.2, 0.03, 32);
+            const mat = new THREE.MeshPhongMaterial({ color: 0xffff00 });
+            frisbee = new THREE.Mesh(geo, mat);
+            scene.add(frisbee);
+
+            const light = new THREE.DirectionalLight(0xffffff, 1);
+            light.position.set(0, 10, 10);
+            scene.add(light);
+            
+            camera.position.z = 3;
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            // 讓虛擬飛盤與手機同步
+            frisbee.rotation.x = devicePitch * (Math.PI / 180);
+            frisbee.rotation.z = -deviceRoll * (Math.PI / 180);
+            frisbee.position.set(0, -0.5, 0);
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>

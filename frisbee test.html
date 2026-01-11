@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>飛盤轉速測量儀</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* --- App 視覺風格 (粉色漸層主題) --- */
+        body {
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            background: linear-gradient(135deg, #F06292 0%, #E91E63 100%);
+            /* 粉色漸層背景 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            color: white;
+            padding: 20px;
+        }
+
+        .app-container {
+            background-color: rgba(255, 255, 255, 0.95);
+            width: 100%;
+            max-width: 400px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            color: #333;
+            text-align: center;
+        }
+
+        /* 頂部導航欄 */
+        .header {
+            background-color: #D81B60;
+            /* 深粉色頂欄 */
+            padding: 15px;
+            font-size: 1.5em;
+            font-weight: 700;
+            color: white;
+        }
+
+        .content {
+            padding: 30px 20px;
+        }
+
+        /* 測量數據區 */
+        .data-display {
+            margin-bottom: 30px;
+            padding: 20px;
+            background-color: #FCE4EC;
+            /* 淺粉色背景 */
+            border-radius: 15px;
+        }
+
+        .metric-label {
+            font-size: 0.9em;
+            color: #888;
+            margin-bottom: 5px;
+        }
+
+        /* 核心 RPM 顯示 */
+        #rpmOutput {
+            font-size: 4em;
+            font-weight: 700;
+            color: #E91E63;
+        }
+
+        /* 計時器和圈數 */
+        .secondary-data {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+        }
+
+        .secondary-item {
+            flex: 1;
+        }
+
+        #timerOutput,
+        #rotationsInput {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: #4A148C;
+            /* 紫色或其他醒目顏色 */
+            border: none;
+            text-align: center;
+            width: 100%;
+            background: transparent;
+        }
+
+        /* 按鈕樣式 */
+        .control-panel button {
+            width: 80%;
+            padding: 15px;
+            margin: 10px auto;
+            border: none;
+            border-radius: 50px;
+            /* 圓角按鈕 */
+            font-size: 1.2em;
+            font-weight: 700;
+            transition: background-color 0.3s, transform 0.1s;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+        }
+
+        /* START 按鈕 (粉色) */
+        #startButton {
+            background-color: #E91E63;
+            color: white;
+        }
+
+        /* STOP/RESET 按鈕 (灰色/輔助色) */
+        #stopResetButton {
+            background-color: #FFCDD2;
+            color: #D81B60;
+            display: none;
+            /* 預設隱藏 */
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="app-container">
+        <div class="header">飛盤轉速儀</div>
+
+        <div class="content">
+
+            <div class="data-display">
+                <div class="metric-label">當前/最終 RPM</div>
+                <div id="rpmOutput">0.00</div>
+            </div>
+
+            <div class="secondary-data">
+                <div class="secondary-item">
+                    <div class="metric-label">已測量時間 (秒)</div>
+                    <div id="timerOutput">0.00</div>
+                </div>
+                <div class="secondary-item">
+                    <div class="metric-label">輸入圈數</div>
+                    <input type="number" id="rotationsInput" value="0" min="0" step="1" readonly>
+                    <button onclick="addRotation(1)"
+                        style="margin-top: 10px; padding: 5px 10px; width: 60%; font-size: 1em; background-color: #880E4F; color: white;">+
+                        1 圈</button>
+                </div>
+            </div>
+
+            <div class="control-panel">
+                <button id="startButton" onclick="toggleMeasurement(true)">開始測量</button>
+                <button id="stopResetButton" onclick="toggleMeasurement(false)">停止並計算</button>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        let isMeasuring = false;
+        let startTime = 0;
+        let timerInterval = null;
+        let currentRotations = 0;
+
+        const rpmOutput = document.getElementById('rpmOutput');
+        const timerOutput = document.getElementById('timerOutput');
+        const rotationsInput = document.getElementById('rotationsInput');
+        const startButton = document.getElementById('startButton');
+        const stopResetButton = document.getElementById('stopResetButton');
+
+        /**
+         * 更新計時器顯示
+         */
+        function updateTimer() {
+            if (!isMeasuring) return;
+            const elapsedTime = (Date.now() - startTime) / 1000; // 轉換成秒
+            timerOutput.textContent = elapsedTime.toFixed(2);
+
+            // 即時 RPM 估算（如果圈數 > 0）
+            if (currentRotations > 0 && elapsedTime > 0.1) {
+                const currentRPM = (currentRotations / elapsedTime) * 60;
+                rpmOutput.textContent = currentRPM.toFixed(2);
+            } else {
+                rpmOutput.textContent = '0.00';
+            }
+        }
+
+        /**
+         * 增加圈數 (模擬使用者手動計算或點擊)
+         */
+        function addRotation(count) {
+            if (!isMeasuring) {
+                alert('請先點擊「開始測量」按鈕！');
+                return;
+            }
+            currentRotations += count;
+            rotationsInput.value = currentRotations;
+        }
+
+        /**
+         * 開始/停止測量
+         * @param {boolean} start - true 為開始，false 為停止並計算
+         */
+        function toggleMeasurement(start) {
+            if (start) {
+                // --- START ---
+                isMeasuring = true;
+                startTime = Date.now();
+                currentRotations = 0;
+                rotationsInput.value = 0;
+                timerOutput.textContent = '0.00';
+                rpmOutput.textContent = '---';
+
+                // 啟動計時器 (每 100 毫秒更新一次)
+                timerInterval = setInterval(updateTimer, 100);
+
+                // 切換按鈕顯示
+                startButton.style.display = 'none';
+                stopResetButton.style.display = 'block';
+                stopResetButton.textContent = '停止並計算';
+                rotationsInput.readOnly = false; // 允許輸入/點擊增加圈數
+
+            } else {
+                // --- STOP & CALCULATE ---
+                isMeasuring = false;
+                clearInterval(timerInterval);
+                rotationsInput.readOnly = true;
+
+                const finalTime = parseFloat(timerOutput.textContent);
+                const finalRotations = currentRotations;
+
+                if (finalRotations > 0 && finalTime > 0) {
+                    const finalRPM = (finalRotations / finalTime) * 60;
+                    rpmOutput.textContent = finalRPM.toFixed(2);
+                    stopResetButton.textContent = '重設';
+                    stopResetButton.onclick = () => resetApp(); // 停止後變為重設
+                } else {
+                    rpmOutput.textContent = '資料不足';
+                    stopResetButton.textContent = '重設';
+                    stopResetButton.onclick = () => resetApp();
+                }
+            }
+        }
+
+        /**
+         * 重設 App 狀態
+         */
+        function resetApp() {
+            isMeasuring = false;
+            clearInterval(timerInterval);
+            currentRotations = 0;
+
+            rpmOutput.textContent = '0.00';
+            timerOutput.textContent = '0.00';
+            rotationsInput.value = 0;
+            rotationsInput.readOnly = true;
+
+            startButton.style.display = 'block';
+            stopResetButton.style.display = 'none';
+            stopResetButton.onclick = () => toggleMeasurement(false); // 重設點擊事件
+        }
+
+    </script>
+
+</body>
+
+</html>

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR 飛盤角度模擬</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        /* 相機畫面 */
+        #video {
+            position: absolute; width: 100%; height: 100%;
+            object-fit: cover; z-index: -1;
+        }
+        /* UI 控制層 */
+        #controls {
+            position: absolute; bottom: 20px; left: 50%;
+            transform: translateX(-50%); width: 90%;
+            background: rgba(0,0,0,0.6); color: white;
+            padding: 15px; border-radius: 15px; text-align: center;
+        }
+        input { width: 80%; }
+        button { 
+            padding: 10px 20px; font-size: 18px; 
+            background: #4CAF50; color: white; border: none; border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <video id="video" autoplay playsinline></video>
+    
+    <div id="controls">
+        <div>仰角 (Pitch): <span id="pVal">10</span>°</div>
+        <input type="range" id="pitch" min="-10" max="40" value="10">
+        <br><br>
+        <button id="launchBtn">投擲飛盤</button>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // 1. 初始化相機背景
+        async function setupCamera() {
+            const video = document.getElementById('video');
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment" }, // 使用後鏡頭
+                audio: false 
+            });
+            video.srcObject = stream;
+        }
+        setupCamera();
+
+        // 2. 初始化 Three.js 疊加層
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ alpha: true }); // 透明背景
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 3. 飛盤物件
+        const geometry = new THREE.CylinderGeometry(0.15, 0.15, 0.02, 32);
+        const material = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+        const frisbee = new THREE.Mesh(geometry, material);
+        frisbee.visible = false;
+        scene.add(frisbee);
+
+        camera.position.z = 5;
+
+        // 4. 簡單物理邏輯
+        let isFlying = false;
+        let vel = new THREE.Vector3();
+        let pos = new THREE.Vector3();
+
+        document.getElementById('launchBtn').onclick = () => {
+            const pitch = document.getElementById('pitch').value * (Math.PI/180);
+            pos.set(0, -1, 3); // 從畫面底部中間發射
+            vel.set(0, Math.sin(pitch) * 10, -Math.cos(pitch) * 10); // 向螢幕深處飛
+            frisbee.position.copy(pos);
+            frisbee.visible = true;
+            isFlying = true;
+        };
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (isFlying) {
+                vel.y -= 0.05; // 模擬重力
+                pos.add(vel.clone().multiplyScalar(0.1));
+                frisbee.position.copy(pos);
+                frisbee.rotation.y += 0.2; // 旋轉效果
+
+                if (pos.y < -5) isFlying = false;
+            }
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // 更新 UI
+        document.getElementById('pitch').oninput = (e) => {
+            document.getElementById('pVal').innerText = e.target.value;
+        };
+    </script>
+</body>
+</html>

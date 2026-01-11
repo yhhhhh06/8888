@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DiscMaster AI - 飛盤訓練助手</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <style>
+        :root { --primary: #00ff88; --bg: #000; }
+        body { margin: 0; background: var(--bg); color: white; font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+        
+        /* 全螢幕相機佈局 */
+        .app-viewport { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+        #camera-feed { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+        #overlay-canvas { position: absolute; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
+
+        /* 數據顯示面板 (類似 HomeCourt) */
+        .stats-overlay {
+            position: absolute; top: 40px; left: 20px; z-index: 3;
+            background: rgba(0,0,0,0.5); padding: 15px; border-left: 4px solid var(--primary);
+            border-radius: 4px; backdrop-filter: blur(5px);
+        }
+        .stat-item { font-size: 12px; color: #aaa; text-transform: uppercase; margin-bottom: 5px; }
+        .stat-value { font-size: 24px; font-weight: bold; color: var(--primary); }
+
+        /* 底部控制中心 */
+        .bottom-controls {
+            position: absolute; bottom: 30px; width: 100%; z-index: 3;
+            display: flex; flex-direction: column; align-items: center; gap: 20px;
+        }
+        .record-trigger {
+            width: 70px; height: 70px; border-radius: 50%; border: 5px solid white;
+            display: flex; justify-content: center; align-items: center; transition: 0.3s;
+        }
+        .record-trigger-inner { width: 50px; height: 50px; background: red; border-radius: 50%; }
+        .record-trigger.active { transform: scale(1.2); border-color: var(--primary); }
+
+        .angle-adjuster {
+            display: flex; gap: 20px; background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 30px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="app-viewport">
+    <video id="camera-feed" autoplay muted playsinline></video>
+    <canvas id="overlay-canvas"></canvas>
+
+    <div class="stats-overlay">
+        <div class="stat-item">Release Angle</div>
+        <div class="stat-value"><span id="angle-display">15</span>°</div>
+        <div style="margin-top:15px;" class="stat-item">Stability</div>
+        <div class="stat-value">92%</div>
+    </div>
+
+    <div class="bottom-controls">
+        <div class="angle-adjuster">
+            <span>傾斜: <input type="range" id="roll-slider" min="-30" max="30" value="0"></span>
+            <span>仰角: <input type="range" id="pitch-slider" min="0" max="45" value="15"></span>
+        </div>
+        
+        <div class="record-trigger" id="record-btn">
+            <div class="record-trigger-inner"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const video = document.getElementById('camera-feed');
+    const canvas = document.getElementById('overlay-canvas');
+    const ctx = canvas.getContext('2d');
+    const pitchSlider = document.getElementById('pitch-slider');
+    const rollSlider = document.getElementById('roll-slider');
+    const angleDisplay = document.getElementById('angle-display');
+
+    // 初始化鏡頭
+    async function startApp() {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: "environment", frameRate: { ideal: 60 } } 
+        });
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            animate();
+        };
+    }
+
+    // 模擬 AI 軌跡繪製
+    function drawSimulation() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        const pitch = parseFloat(pitchSlider.value);
+        const roll = parseFloat(rollSlider.value);
+        angleDisplay.innerText = pitch;
+
+        ctx.beginPath();
+        ctx.strokeStyle = '#00ff88';
+        ctx.lineWidth = 4;
+        ctx.setLineDash([15, 10]);
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = '#00ff88';
+
+        let x = canvas.width / 2;
+        let y = canvas.height * 0.8;
+        ctx.moveTo(x, y);
+
+        // 模擬飛行路徑計算
+        for(let i=0; i<40; i++) {
+            x += (roll * 0.5) * (i/2); // 頃斜產生的橫移
+            y -= (Math.sin(pitch * Math.PI/180) * 40) - (i * 1.2); // 拋物線
+            ctx.lineTo(x, y);
+            if(y < 100) break;
+        }
+        ctx.stroke();
+    }
+
+    function animate() {
+        drawSimulation();
+        requestAnimationFrame(animate);
+    }
+
+    // 錄影按鈕動效
+    let isRecording = false;
+    document.getElementById('record-btn').onclick = function() {
+        isRecording = !isRecording;
+        this.classList.toggle('active');
+        this.querySelector('.record-trigger-inner').style.borderRadius = isRecording ? '4px' : '50%';
+        // 這裡可以加入 MediaRecorder 錄影邏輯
+    };
+
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    });
+
+    startApp();
+</script>
+</body>
+</html>

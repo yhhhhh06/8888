@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>飛盤訓練助手</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; background: #1a1a1a; color: white; overflow-x: hidden; }
+        .container { display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        
+        /* 影片與畫布區域 */
+        #video-container { position: relative; width: 100%; max-width: 500px; border-radius: 10px; overflow: hidden; background: #000; }
+        video, canvas { width: 100%; display: block; }
+        canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+
+        /* 控制面板 */
+        .controls { background: #333; padding: 20px; border-radius: 10px; margin-top: 15px; width: 90%; max-width: 460px; }
+        .slider-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-size: 14px; }
+        input[type="range"] { width: 100%; }
+        
+        .btn-group { display: flex; gap: 10px; }
+        button { flex: 1; padding: 12px; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
+        #record-btn { background: #ff4444; color: white; }
+        #sim-btn { background: #44bbff; color: white; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>飛盤模擬訓練</h2>
+
+    <div id="video-container">
+        <video id="preview" autoplay muted playsinline></video>
+        <canvas id="trajectoryCanvas"></canvas>
+    </div>
+
+    <div class="controls">
+        <div class="slider-group">
+            <label>仰角 (Pitch): <span id="p-val">15</span>°</label>
+            <input type="range" id="pitch" min="-10" max="45" value="15">
+        </div>
+        <div class="slider-group">
+            <label>頃斜角度 (Roll/Hyzer): <span id="r-val">0</span>°</label>
+            <input type="range" id="roll" min="-45" max="45" value="0">
+        </div>
+        
+        <div class="btn-group">
+            <button id="sim-btn">啟動模擬軌跡</button>
+            <button id="record-btn">開始錄影</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const video = document.getElementById('preview');
+    const canvas = document.getElementById('trajectoryCanvas');
+    const ctx = canvas.getContext('2d');
+    const recordBtn = document.getElementById('record-btn');
+    
+    let mediaRecorder;
+    let recordedChunks = [];
+
+    // 1. 初始化相機
+    async function initCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+            video.srcObject = stream;
+            
+            // 設置畫布大小與影片一致
+            video.onloadedmetadata = () => {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+            };
+        } catch (err) {
+            alert("無法存取相機: " + err);
+        }
+    }
+
+    // 2. 模擬飛行軌跡邏輯
+    function drawTrajectory() {
+        const pitch = document.getElementById('pitch').value;
+        const roll = document.getElementById('roll').value;
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.beginPath();
+        ctx.strokeStyle = '#00ff00';
+        ctx.lineWidth = 5;
+        ctx.setLineDash([10, 5]);
+
+        // 起點 (畫面底部中央)
+        let x = canvas.width / 2;
+        let y = canvas.height - 50;
+        ctx.moveTo(x, y);
+
+        // 簡單物理模擬公式
+        const velocity = 15; // 假設初始速度
+        const radPitch = pitch * (Math.PI / 180);
+        const radRoll = roll * (Math.PI / 180);
+
+        for (let t = 0; t < 30; t++) {
+            // 考慮仰角決定高度，頃斜角度決定左右偏轉
+            x += (radRoll * 10); // 頃斜造成的水平偏移
+            y -= (Math.sin(radPitch) * velocity * 5) - (t * 0.5); // 仰角與重力感
+            ctx.lineTo(x, y);
+            if (y > canvas.height || y < 0) break;
+        }
+        ctx.stroke();
+    }
+
+    // 3. 錄影功能
+    recordBtn.onclick = () => {
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+            mediaRecorder.stop();
+            recordBtn.innerText = "開始錄影";
+            recordBtn.style.background = "#ff4444";
+        } else {
+            recordedChunks = [];
+            const stream = video.srcObject;
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.ondataavailable = (e) => recordedChunks.push(e.data);
+            mediaRecorder.onstop = saveVideo;
+            mediaRecorder.start();
+            recordBtn.innerText = "停止錄影";
+            recordBtn.style.background = "#333";
+        }
+    };
+
+    function saveVideo() {
+        const blob = new Blob(recordedChunks, { type: "video/webm" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "frisbee-training.webm";
+        a.click();
+    }
+
+    // 監聽滑桿變化
+    document.getElementById('pitch').oninput = (e) => {
+        document.getElementById('p-val').innerText = e.target.value;
+        drawTrajectory();
+    };
+    document.getElementById('roll').oninput = (e) => {
+        document.getElementById('r-val').innerText = e.target.value;
+        drawTrajectory();
+    };
+    document.getElementById('sim-btn').onclick = drawTrajectory;
+
+    initCamera();
+</script>
+</body>
+</html>

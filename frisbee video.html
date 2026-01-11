@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>錄影畫面飛盤測速模擬</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* --- App 視覺風格 (粉色漸層主題) --- */
+        body {
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            /* 應用您要求的粉色漸層背景 */
+            background: linear-gradient(135deg, #F06292 0%, #E91E63 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .app-card {
+            background-color: white;
+            width: 100%;
+            max-width: 500px;
+            border-radius: 16px;
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
+            padding: 30px;
+            text-align: center;
+        }
+
+        h1 {
+            color: #D81B60;
+            margin-bottom: 20px;
+        }
+
+        /* 檔案上傳模擬區塊 */
+        .upload-section {
+            border: 2px dashed #FFCDD2;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .upload-section:hover {
+            background-color: #F8BBD0;
+            /* 淺粉色懸停效果 */
+        }
+
+        .upload-button {
+            background-color: #E91E63;
+            /* 深粉色按鈕 */
+            color: white;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 50px;
+            font-size: 1.1em;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .upload-button:hover {
+            background-color: #C2185B;
+        }
+
+        .result-display {
+            padding: 20px;
+            background-color: #FFF3E0;
+            border-radius: 10px;
+            margin-top: 30px;
+        }
+
+        #resultRPM {
+            font-size: 4em;
+            font-weight: 700;
+            color: #FF5722;
+            /* 醒目的結果顏色 */
+            margin: 10px 0;
+        }
+
+        .info-label {
+            color: #777;
+            margin-top: 15px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="app-card">
+        <h1>🎬 錄影自動測速</h1>
+        <p>透過影像分析來計算飛盤轉速。</p>
+
+        <div class="upload-section" onclick="document.getElementById('videoFile').click()">
+            <input type="file" id="videoFile" accept="video/mp4" style="display: none;">
+            <span id="uploadText">點擊此處上傳影片 (.mp4)</span>
+            <p class="info-label">(此網頁功能為前端模擬，實際測速需要後端程式)</p>
+        </div>
+
+        <button class="upload-button" onclick="startAnalysis()">開始分析影片</button>
+
+        <div class="result-display">
+            <h2>分析結果</h2>
+            <div id="resultRPM">--- RPM</div>
+            <div class="info-label">
+                <span id="resultTime">時間: 0.00 秒</span> |
+                <span id="resultRotations">圈數: 0.00 圈</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 監聽檔案選擇事件，更新上傳區的文字
+        document.getElementById('videoFile').addEventListener('change', function (e) {
+            const uploadText = document.getElementById('uploadText');
+            if (e.target.files.length > 0) {
+                uploadText.textContent = '已選擇檔案: ' + e.target.files[0].name;
+                uploadText.style.color = '#00796B'; // 換個顏色表示成功選擇
+            } else {
+                uploadText.textContent = '點擊此處上傳影片 (.mp4)';
+                uploadText.style.color = '#333';
+            }
+        });
+
+        /**
+         * 模擬開始分析的過程和結果
+         */
+        function startAnalysis() {
+            const fileInput = document.getElementById('videoFile');
+            if (fileInput.files.length === 0) {
+                alert("請先選擇一個影片檔案！");
+                return;
+            }
+
+            // 顯示分析中狀態
+            document.getElementById('resultRPM').textContent = "分析中...";
+            document.getElementById('resultRPM').style.color = '#777';
+            document.getElementById('resultTime').textContent = `時間: 載入中...`;
+            document.getElementById('resultRotations').textContent = `圈數: 載入中...`;
+
+            // 使用 setTimeout 模擬後端處理時間
+            setTimeout(() => {
+                // 模擬分析結果 (真實 App 由 Python/OpenCV 計算後傳回)
+                const simulatedRPM = Math.floor(Math.random() * (1200 - 600 + 1)) + 600;
+                const simulatedTime = (Math.random() * (5 - 2) + 2).toFixed(2);
+                const simulatedRotations = ((simulatedRPM / 60) * simulatedTime);
+
+                // 更新結果顯示
+                document.getElementById('resultRPM').textContent = simulatedRPM.toFixed(2) + " RPM";
+                document.getElementById('resultRPM').style.color = '#FF5722';
+                document.getElementById('resultTime').textContent = `時間: ${simulatedTime} 秒`;
+                document.getElementById('resultRotations').textContent = `圈數: ${simulatedRotations.toFixed(2)} 圈`;
+
+                alert(`分析完成！測速結果：${simulatedRPM.toFixed(2)} RPM`);
+            }, 3000); // 模擬 3 秒延遲
+        }
+    </script>
+
+</body>
+
+</html>

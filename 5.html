@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>飛盤距離角度導引與錄影</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        #video, #canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        #canvas { z-index: 0; } /* Three.js 渲染層 */
+        #video { z-index: -1; } /* 相機背景層 */
+        
+        #ui {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            width: 90%; background: rgba(0,0,0,0.8); color: white;
+            padding: 15px; border-radius: 20px; text-align: center;
+            z-index: 1; /* 確保 UI 在最上層 */
+        }
+        .guide-box { border: 2px solid #00ff00; margin-bottom: 10px; padding: 10px; border-radius: 10px; }
+        .target-text { font-size: 20px; font-weight: bold; color: #FFeb3b; }
+        #angleDisplay { font-size: 16px; margin: 10px 0; }
+        input[type="range"] { width: 100%; margin: 10px 0; }
+        button {
+            width: 100%; padding: 12px; font-size: 18px; border-radius: 10px;
+            border: none; background: #2196F3; color: white; cursor: pointer; margin-top: 10px;
+        }
+        #recordBtn { background: #E91E63; } /* 錄影按鈕紅色 */
+        #recordBtn.recording { background: #FFC107; color: #333; } /* 錄影中 */
+        #recordTimer { color: #fff; font-size: 14px; margin-top: 5px; }
+
+        #permissionBtn {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 100; padding: 20px; background: #4CAF50; color: white; border-radius: 10px; border: none;
+        }
+    </style>
+</head>
+<body>
+
+    <button id="permissionBtn">啟動相機與導引系統</button>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas> <div id="ui">
+        <div class="guide-box">
+            目標距離：<span id="distVal" class="target-text">30</span> 公尺
+            <input type="range" id="distSlider" min="10" max="100" value="30">
+        </div>
+        
+        <div id="angleDisplay">
+            <div>建議：仰角 <span id="recPitch">12</span>° | 傾斜 <span id="recRoll">5</span>°</div>
+            <div style="color: #00ff00; margin-top: 5px;">
+                目前：仰角 <span id="curPitch">0</span>° | 傾斜 <span id="curRoll">0</span>°
+            </div>
+        </div>
+        <button id="recordBtn">開始錄影</button>
+        <div id="recordTimer">00:00</div>
+        <button id="throwBtn">模擬飛行路徑</button>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        let scene, camera, renderer, frisbee, trajectoryLine;
+        let devicePitch = 0, deviceRoll = 0;
+        let targetDist = 30;
+
+        // 錄影相關變數
+        let mediaRecorder;
+        let recordedChunks = [];
+        let isRecording = false;
+        let recordingStartTime;
+        let timerInterval;
+
+        const videoElement = document.getElementById('video');
+        const canvasElement = document.getElementById('canvas');
+        const recordBtn = document.getElementById('recordBtn');
+        const recordTimerDisplay = document.getElementById('recordTimer');
+
+        // 權限啟動
+        document.getElementById('permissionBtn').onclick = async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment" }, audio: false 
+            });
+            videoElement.srcObject = stream;
+            
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                await DeviceOrientationEvent.requestPermission();
+            }
+            window.addEventListener('deviceorientation', (e) => {
+                devicePitch = e.beta;  // 仰角
+                deviceRoll = e.gamma; // 傾斜
+                updateUI();
+            });
+
+            document.getElementById('permissionBtn').style.display = 'none';
+            initThree();
+            setupMediaRecorder(stream); // 初始化錄影功能
+        };
+
+        function updateUI() {
+            // 簡單推薦邏輯：距離越遠，需要的仰角通常微增，且需要更多 Hyzer (傾斜) 來抵消高速翻轉
+            const recP = Math.round(5 + (targetDist * 0.2)); 
+            const recR = Math.round(targetDist * 0.15);      
+
+            document.getElementById('recPitch').innerText = recP;
+            document.getElementById('recRoll').innerText = recR;
+            document.getElementById('curPitch').innerText = Math.round(devicePitch);
+            document.getElementById('curRoll').innerText = Math.round(deviceRoll);
+
+            // 當角度接近時改變顏色提示
+            const isMatch = Math.abs(devicePitch - recP) < 3 && Math.abs(deviceRoll - recR) < 3;
+            document.getElementById('angleDisplay').style.color = isMatch ? "#00ff00" : "#ff5722";
+        }
+
+        document.getElementById('distSlider').oninput = (e) => {
+            targetDist = e.target.value;
+            document.getElementById('distVal').innerText = targetDist;
+            updateUI();
+        };
+
+        function initThree() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ 
+                alpha: true, 
+                antialias: true,
+                canvas: canvasElement // 渲染到指定的 canvas
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            const geo = new THREE.CylinderGeometry(0.2, 0.2, 0.03, 32);
+            const mat = new THREE.MeshPhongMaterial({ color: 0xffff00 });
+            frisbee = new THREE.Mesh(geo, mat);
+            scene.add(frisbee);
+
+            const light = new THREE.DirectionalLight(0xffffff, 1);
+            light.position.set(0, 10, 10);
+            scene.add(light);
+            
+            camera.position.z = 3;
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            // 讓虛擬飛盤與手機同步
+            frisbee.rotation.x = devicePitch * (Math.PI / 180);
+            frisbee.rotation.z = -deviceRoll * (Math.PI / 180);
+            frisbee.position.set(0, -0.5, 0);
+            renderer.render(scene, camera);
+        }
+
+        // --- 錄影功能 ---
+        function setupMediaRecorder(cameraStream) {
+            // 將 Three.js 渲染的 canvas 轉換為 stream
+            const canvasStream = canvasElement.captureStream(30); // 30fps
+
+            // 合併相機與 canvas 畫面到同一個 stream
+            const combinedStream = new MediaStream();
+            cameraStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
+            canvasStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
+
+            mediaRecorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm; codecs=vp8' });
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `frisbee-record-${new Date().toISOString().slice(0, 16)}.webm`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                recordedChunks = [];
+            };
+
+            recordBtn.onclick = () => {
+                if (!isRecording) {
+                    startRecording();
+                } else {
+                    stopRecording();
+                }
+            };
+        }
+
+        function startRecording() {
+            isRecording = true;
+            recordBtn.innerText = "停止錄影";
+            recordBtn.classList.add('recording');
+            recordedChunks = [];
+            mediaRecorder.start();
+            recordingStartTime = Date.now();
+            timerInterval = setInterval(updateRecordTimer, 1000);
+        }
+
+        function stopRecording() {
+            isRecording = false;
+            recordBtn.innerText = "開始錄影";
+            recordBtn.classList.remove('recording');
+            mediaRecorder.stop();
+            clearInterval(timerInterval);
+            recordTimerDisplay.innerText = "00:00";
+        }
+
+        function updateRecordTimer() {
+            const elapsedTime = Date.now() - recordingStartTime;
+            const seconds = Math.floor(elapsedTime / 1000) % 60;
+            const minutes = Math.floor(elapsedTime / (1000 * 60));
+            recordTimerDisplay.innerText = 
+                `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        // 模擬飛行路徑的按鈕事件 (可擴展)
+        document.getElementById('throwBtn').onclick = () => {
+            // 在這裡實現你的模擬飛行軌跡邏輯，可以基於當前的 devicePitch, deviceRoll 和 targetDist
+            alert(`模擬投擲！目前仰角: ${Math.round(devicePitch)}°, 傾斜: ${Math.round(deviceRoll)}°，目標距離: ${targetDist}m`);
+            // 你可以在這裡繪製一條基於當前角度的預測軌跡線
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>飛盤 AR 錄影分析工具</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: -apple-system, sans-serif; }
+        #video { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: -2; }
+        #canvas { position: absolute; width: 100%; height: 100%; z-index: -1; }
+        
+        /* 錄影指示燈 */
+        #recIndicator {
+            position: absolute; top: 20px; right: 20px; color: red; font-weight: bold;
+            display: none; align-items: center; gap: 5px; font-size: 18px;
+        }
+        .dot { height: 12px; width: 12px; background-color: red; border-radius: 50%; display: inline-block; animation: blink 1s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
+
+        #ui {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            width: 90%; background: rgba(0,0,0,0.85); color: white;
+            padding: 15px; border-radius: 20px; text-align: center;
+        }
+        .stats { color: #00ff00; font-size: 14px; margin-bottom: 10px; }
+        input[type="range"] { width: 100%; margin: 10px 0; }
+        
+        .btn-group { display: flex; gap: 10px; margin-top: 10px; }
+        button { flex: 1; padding: 12px; border-radius: 10px; border: none; font-weight: bold; cursor: pointer; }
+        #recordBtn { background: #ff5252; color: white; }
+        #recordBtn.recording { background: #333; }
+        #previewBtn { background: #4CAF50; color: white; display: none; }
+
+        /* 預覽視窗 */
+        #previewContainer {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 80%; background: white; padding: 10px; border-radius: 10px; display: none; z-index: 10;
+        }
+        video#previewVideo { width: 100%; border-radius: 5px; }
+        
+        #permissionBtn {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); color: white; border: none; z-index: 100; font-size: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <button id="permissionBtn">點擊啟動相機與角度感測器</button>
+    
+    <div id="recIndicator"><span class="dot"></span> REC <span id="timer">00:00</span></div>
+    
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+
+    <div id="ui">
+        <div class="stats">
+            目標距離: <span id="distVal">30</span>m | 
+            建議: <span id="recAngle">15°</span>
+        </div>
+        <input type="range" id="distSlider" min="10" max="100" value="30">
+        
+        <div id="angleDisplay">
+            目前仰角: <span id="curPitch">0</span>° | 傾斜: <span id="curRoll">0</span>°
+        </div>
+
+        <div class="btn-group">
+            <button id="recordBtn">開始錄影</button>
+            <button id="previewBtn">查看回放</button>
+        </div>
+    </div>
+
+    <div id="previewContainer">
+        <h3 style="color:black; margin-top:0;">錄影回放</h3>
+        <video id="previewVideo" controls></video>
+        <button onclick="document.getElementById('previewContainer').style.display='none'" style="background:#333; color:white; margin-top:10px; width:100%;">關閉</button>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        let scene, camera, renderer, frisbee;
+        let pitch = 0, roll = 0;
+        let mediaRecorder, recordedChunks = [];
+        let startTime, timerInterval;
+
+        const recordBtn = document.getElementById('recordBtn');
+        const previewBtn = document.getElementById('previewBtn');
+
+        // 1. 初始化與權限
+        document.getElementById('permissionBtn').onclick = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                document.getElementById('video').srcObject = stream;
+                
+                if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    await DeviceOrientationEvent.requestPermission();
+                }
+                window.addEventListener('deviceorientation', (e) => {
+                    pitch = e.beta; 
+                    roll = e.gamma;
+                    updateUI();
+                });
+
+                document.getElementById('permissionBtn').style.display = 'none';
+                initThree();
+                setupRecorder(stream);
+            } catch (err) { alert("請確保使用 HTTPS 並開啟相機權限"); }
+        };
+
+        function updateUI() {
+            document.getElementById('curPitch').innerText = Math.round(pitch);
+            document.getElementById('curRoll').innerText = Math.round(roll);
+            const dist = document.getElementById('distSlider').value;
+            document.getElementById('distVal').innerText = dist;
+            document.getElementById('recAngle').innerText = Math.round(5 + dist * 0.2) + "°";
+        }
+
+        // 2. Three.js 場景 (虛擬飛盤)
+        function initThree() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('canvas'), alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            const geo = new THREE.CylinderGeometry(0.2, 0.2, 0.03, 32);
+            const mat = new THREE.MeshPhongMaterial({ color: 0xffff00 });
+            frisbee = new THREE.Mesh(geo, mat);
+            scene.add(frisbee);
+
+            const light = new THREE.PointLight(0xffffff, 15);
+            light.position.set(2, 5, 5);
+            scene.add(light);
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+
+            camera.position.z = 2;
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            frisbee.rotation.x = pitch * (Math.PI / 180);
+            frisbee.rotation.z = -roll * (Math.PI / 180);
+            frisbee.position.set(0, -0.6, 0);
+            renderer.render(scene, camera);
+        }
+
+        // 3. 錄影邏輯
+        function setupRecorder(cameraStream) {
+            // 合併相機與 3D 畫布
+            const canvasStream = document.getElementById('canvas').captureStream(30);
+            const combined = new MediaStream([...cameraStream.getTracks(), ...canvasStream.getTracks()]);
+            
+            mediaRecorder = new MediaRecorder(combined, { mimeType: 'video/webm' });
+
+            mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
+
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                document.getElementById('previewVideo').src = url;
+                previewBtn.style.display = 'block';
+                
+                // 同時自動下載一份
+                const a = document.createElement('a');
+                a.href = url; a.download = 'frisbee_analysis.webm'; a.click();
+            };
+        }
+
+        recordBtn.onclick = () => {
+            if (mediaRecorder.state === "inactive") {
+                recordedChunks = [];
+                mediaRecorder.start();
+                startTimer();
+                recordBtn.innerText = "停止錄製";
+                recordBtn.classList.add('recording');
+                document.getElementById('recIndicator').style.display = 'flex';
+            } else {
+                mediaRecorder.stop();
+                stopTimer();
+                recordBtn.innerText = "開始錄影";
+                recordBtn.classList.remove('recording');
+                document.getElementById('recIndicator').style.display = 'none';
+            }
+        };
+
+        previewBtn.onclick = () => {
+            document.getElementById('previewContainer').style.display = 'block';
+            document.getElementById('previewVideo').play();
+        };
+
+        function startTimer() {
+            startTime = Date.now();
+            timerInterval = setInterval(() => {
+                const diff = Math.floor((Date.now() - startTime) / 1000);
+                const m = Math.floor(diff / 60).toString().padStart(2, '0');
+                const s = (diff % 60).toString().padStart(2, '0');
+                document.getElementById('timer').innerText = `${m}:${s}`;
+            }, 1000);
+        }
+
+        function stopTimer() { clearInterval(timerInterval); }
+    </script>
+</body>
+</html>
